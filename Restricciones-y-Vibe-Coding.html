@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- Playables SDK -->
+<script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vinyl Store Simulator</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0c0a09;
+    color: #e7e5e4;
+    font-family: 'Courier New', monospace;
+    image-rendering: pixelated;
+    user-select: none;
+    overflow-x: hidden;
+  }
+  #gameContainer {
+    width: 960px;
+    max-width: 100vw;
+    margin: 10px auto;
+  }
+  #topBar {
+    display: grid;
+    grid-template-columns: repeat(5,1fr);
+    background: #1c1917;
+    border: 3px solid #44403c;
+    border-bottom: none;
+    padding: 8px 12px;
+    font-size: 14px;
+    font-weight: bold;
+    text-shadow: 2px 2px 0 #000;
+  }
+  #topBar > div { white-space: nowrap; }
+  #canvasWrap {
+    position: relative;
+    border: 3px solid #44403c;
+    background: #000;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 800/600;
+    cursor: crosshair;
+    image-rendering: pixelated;
+  }
+  #musicPlayer {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 52px;
+    height: 52px;
+    background: #292524;
+    border: 3px solid #57534e;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    cursor: pointer;
+    z-index: 5;
+    box-shadow: 3px 3px 0 #000;
+    transition: all 0.1s;
+  }
+  #musicPlayer:hover { transform: translate(-1px,-1px); box-shadow: 4px 4px 0 #000; }
+  #musicPlayer.on {
+    background: #eab308;
+    color: #000;
+    border-color: #fde047;
+    box-shadow: 0 0 15px #eab308, 3px 3px 0 #000;
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+  #customerPopup {
+    position: absolute;
+    background: #1c1917;
+    border: 3px solid #eab308;
+    padding: 14px;
+    min-width: 240px;
+    display: none;
+    z-index: 20;
+    box-shadow: 5px 5px 0 #000;
+  }
+  #customerPopup h4 { margin:0 0 8px; color:#eab308; font-size:14px; }
+  .genreBtn {
+    width: 100%;
+    margin: 3px 0;
+    text-align: left;
+    padding: 6px 8px;
+    background: #292524;
+    border: 2px solid #44403c;
+    color: #e7e5e4;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .genreBtn:hover:not(:disabled) { background:#44403c; border-color:#eab308; }
+  .genreBtn:disabled { opacity:0.4; cursor:not-allowed; }
+  #ui {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .panel {
+    background: #1c1917;
+    border: 3px solid #44403c;
+    padding: 12px;
+    box-shadow: 3px 3px 0 #000;
+  }
+  .panel h3 {
+    margin: 0 0 10px;
+    font-size: 14px;
+    color: #eab308;
+    border-bottom: 2px solid #44403c;
+    padding-bottom: 6px;
+    letter-spacing: 1px;
+  }
+  .vin {
+    display: grid;
+    grid-template-columns: 1fr 35px 45px 85px;
+    gap: 6px;
+    align-items: center;
+    margin: 5px 0;
+    font-size: 12px;
+    padding: 3px 0;
+    border-bottom: 1px dotted #333;
+  }
+  .vin .lbl { font-weight: bold; }
+  button {
+    background: #44403c;
+    color: #e7e5e4;
+    border: 2px solid #57534e;
+    padding: 5px 8px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    box-shadow: 2px 2px 0 #000;
+  }
+  button:hover { background:#57534e; }
+  button:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 #000; }
+  #tooltip {
+    font-size: 11px;
+    line-height: 1.5;
+    opacity: 0.85;
+    margin-top: 10px;
+  }
+  @media (max-width: 980px) {
+    #gameContainer { width: 100%; padding: 0 5px; }
+    #topBar { font-size: 12px; grid-template-columns: repeat(3,1fr); gap: 4px; }
+    #ui { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="gameContainer">
+  <div id="topBar">
+    <div>💵 $<span id="money">100</span></div>
+    <div>⭐ <span id="rep">50</span></div>
+    <div>🧹 <span id="clean">100</span>%</div>
+    <div>📅 DAY <span id="day">1</span></div>
+    <div>🕒 <span id="time">9:00am</span></div>
+  </div>
+  <div id="canvasWrap">
+    <canvas id="game" width="800" height="600"></canvas>
+    <div id="musicPlayer" title="Toggle Vintage Player - Keeps customers chill">🎵</div>
+    <div id="customerPopup">
+      <div id="custWant"></div>
+      <div id="custButtons"></div>
+      <button onclick="closePopup()" style="margin-top:8px;width:100%">CANCEL</button>
+    </div>
+  </div>
+  <div id="ui">
+    <div class="panel" id="inventory"></div>
+    <div class="panel">
+      <h3>STORE ACTIONS</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <button onclick="saveGame(); sfx('cash')">💾 SAVE</button>
+        <button onclick="loadGame(); renderInventory(); sfx('door')">📂 LOAD</button>
+        <button onclick="toggleSound()" id="soundBtn">🔊 SOUND</button>
+        <button onclick="resetGame()">🔄 RESET</button>
+      </div>
+      <div id="tooltip">
+        <b>LEFT CLICK:</b> Move / Serve Customer<br>
+        <b>RIGHT CLICK:</b> Mop floor ($2)<br>
+        <b>MUSIC:</b> Slows patience decay +5 rep/day<br>
+        <b>GOAL:</b> Survive 7 days, hit $500
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TILE=40, W=20, H=15;
+const canvas=document.getElementById('game');
+const ctx=canvas.getContext('2d');
+ctx.imageSmoothingEnabled=false;
+
+let map=[], shelves=[];
+let player={x:10,y:8,px:10*TILE+20,py:8*TILE+20,path:[],moving:false};
+let customers=[], custId=0;
+let inventory=[
+ {name:'PROG ROCK',stock:5,price:18,cost:8,color:'#8b5cf6'},
+ {name:'GRUNGE',stock:5,price:16,cost:7,color:'#84cc16'},
+ {name:'CLASSIC ROCK',stock:5,price:20,cost:9,color:'#ef4444'},
+ {name:'INDIE ROCK',stock:5,price:15,cost:6,color:'#06b6d4'},
+ {name:'ALTERNATIVE',stock:5,price:17,cost:8,color:'#f59e0b'}
+];
+let money=100, rep=50, cleanliness=100, day=1, time=540, isOpen=true;
+let musicOn=false, soundOn=true;
+let spawnTimer=0, spawnInterval=5000;
+let dirtSpots=[], floatingTexts=[], currentCustomer=null;
+let lastTime=performance.now(), dayEarnings=0, stepTimer=0;
+
+let audioCtx;
+function initAudio(){ if(!audioCtx) audioCtx=new (window.AudioContext||webkitAudioContext)(); }
+function sfx(type){
+ if(!soundOn) return; initAudio();
+ const now=audioCtx.currentTime;
+ const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+ o.connect(g); g.connect(audioCtx.destination);
+ switch(type){
+   case 'cash': o.frequency.setValueAtTime(800,now); o.frequency.exponentialRampToValueAtTime(1250,now+0.09); g.gain.setValueAtTime(0.18,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.14); o.start(now); o.stop(now+0.15); break;
+   case 'door': o.type='triangle'; o.frequency.setValueAtTime(900,now); g.gain.setValueAtTime(0.14,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.11); o.start(now); o.stop(now+0.12); setTimeout(()=>{if(!soundOn)return;const o2=audioCtx.createOscillator(),g2=audioCtx.createGain();o2.type='triangle';o2.frequency.setValueAtTime(1350,audioCtx.currentTime);g2.gain.setValueAtTime(0.12,audioCtx.currentTime);g2.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.09);o2.connect(g2);g2.connect(audioCtx.destination);o2.start();o2.stop(audioCtx.currentTime+0.1);},100); break;
+   case 'angry': o.type='sawtooth'; o.frequency.setValueAtTime(190,now); o.frequency.linearRampToValueAtTime(110,now+0.28); g.gain.setValueAtTime(0.22,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.29); o.start(now); o.stop(now+0.3); break;
+   case 'clean': o.type='square'; o.frequency.setValueAtTime(520,now); g.gain.setValueAtTime(0.09,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.07); o.start(now); o.stop(now+0.08); break;
+   case 'step': o.type='sine'; o.frequency.setValueAtTime(75+Math.random()*15,now); g.gain.setValueAtTime(0.035,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.05); o.start(now); o.stop(now+0.06); break;
+ }
+}
+
+function initMap(){
+ map=Array(H).fill().map(()=>Array(W).fill(0));
+ for(let x=0;x<W;x++){ map[0][x]=1; map[H-1][x]=1; }
+ for(let y=0;y<H;y++){ map[y][0]=1; map[y][W-1]=1; }
+ map[0][10]=4;
+ shelves=[
+  {x:2,y:2,w:1,h:3,genre:0,label:'PROG'},
+  {x:2,y:8,w:1,h:3,genre:1,label:'GRUNGE'},
+  {x:17,y:2,w:1,h:3,genre:2,label:'CLASSIC'},
+  {x:17,y:8,w:1,h:3,genre:3,label:'INDIE'},
+  {x:6,y:4,w:4,h:1,genre:4,label:'ALT'}
+ ];
+ shelves.forEach(s=>{ for(let dy=0;dy<s.h;dy++) for(let dx=0;dx<s.w;dx++) map[s.y+dy][s.x+dx]=2; });
+ for(let x=8;x<=11;x++) map[11][x]=3;
+ map[11][9]=6;
+}
+
+function isWalkable(x,y){
+ if(x<0||y<0||x>=W||y>=H) return false;
+ const t=map[y][x];
+ return t===0||t===4||t===6;
+}
+function findPath(sx,sy,ex,ey){
+ sx=Math.floor(sx); sy=Math.floor(sy); ex=Math.floor(ex); ey=Math.floor(ey);
+ if(!isWalkable(ex,ey)) return [];
+ const q=[[sx,sy]], vis=Array(H).fill().map(()=>Array(W).fill(0)), prev=Array(H).fill().map(()=>Array(W).fill(null));
+ vis[sy][sx]=1;
+ const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+ while(q.length){
+   const [x,y]=q.shift();
+   if(x===ex&&y===ey) break;
+   for(const [dx,dy] of dirs){
+     const nx=x+dx, ny=y+dy;
+     if(nx<0||ny<0||nx>=W||ny>=H||vis[ny][nx]) continue;
+     if(!isWalkable(nx,ny)&&!(nx===ex&&ny===ey)) continue;
+     vis[ny][nx]=1; prev[ny][nx]=[x,y]; q.push([nx,ny]);
+   }
+ }
+ if(!vis[ey][ex]) return [];
+ const path=[]; let cx=ex,cy=ey;
+ while(!(cx===sx&&cy===sy)){ path.unshift([cx,cy]); [cx,cy]=prev[cy][cx]; }
+ return path;
+}
+
+function spawnCustomer(){
+ if(!isOpen||customers.length>=8+Math.floor(rep/20)) return;
+ const g=Math.floor(Math.random()*5);
+ const c={
+  id:custId++,x:10,y:0,px:410,py:20,genre:g,genreName:inventory[g].name,
+  patience:100,maxPatience:Math.max(40,100-day*4),state:'entering',
+  path:findPath(10,0,10,2),browseCount:0,waitTime:0,angry:false,
+  bob:Math.random()*6.28,color:`hsl(${200+Math.random()*60},65%,60%)`
+ };
+ customers.push(c); sfx('door'); spawnTimer=0;
+}
+function chooseTarget(c){
+ let shelf=shelves[Math.random()<0.75? c.genre : Math.floor(Math.random()*5)];
+ const spots=[];
+ for(let dy=-1;dy<=shelf.h;dy++) for(let dx=-1;dx<=shelf.w;dx++){
+   if(dx>=0&&dx<shelf.w&&dy>=0&&dy<shelf.h) continue;
+   const x=shelf.x+dx, y=shelf.y+dy;
+   if(isWalkable(x,y)) spots.push({x,y});
+ }
+ if(spots.length){ const t=spots[Math.floor(Math.random()*spots.length)]; c.path=findPath(c.x,c.y,t.x,t.y); c.waitTime=1800+Math.random()*2200; }
+}
+function updateCustomer(c,dt){
+ c.bob+=dt*0.004;
+ if(c.path.length){
+   const [tx,ty]=c.path[0], tpx=tx*TILE+20, tpy=ty*TILE+20;
+   const dx=tpx-c.px, dy=tpy-c.py, d=Math.hypot(dx,dy), sp=dt*(0.085+day*0.002);
+   if(d<sp){ c.px=tpx; c.py=tpy; c.x=tx; c.y=ty; c.path.shift(); }
+   else { c.px+=dx/d*sp; c.py+=dy/d*sp; c.x=c.px/TILE; c.y=c.py/TILE; }
+   return;
+ }
+ if(c.state==='entering'){ c.state='browsing'; chooseTarget(c); }
+ else if(c.state==='browsing'){
+   c.waitTime-=dt;
+   if(c.waitTime<=0){ c.browseCount++; if(c.browseCount>=2+Math.random()*2){ c.state='waiting'; c.path=findPath(c.x,c.y,10,9); } else chooseTarget(c); }
+ }
+ else if(c.state==='waiting'){
+   let dec=0.016+day*0.0012; if(musicOn) dec*=0.68; if(cleanliness<45) dec*=1.6;
+   c.patience-=dec*dt*0.06;
+   if(c.patience<=0){ c.state='angry'; c.angry=true; c.path=findPath(c.x,c.y,10,0); sfx('angry'); rep=Math.max(0,rep-2.5); addFloat('-REP',c.px,c.py,'#ef4444'); }
+ }
+ else if(c.state==='leaving'||c.state==='angry'){ if(c.y<0.5) customers=customers.filter(x=>x.id!==c.id); else if(!c.path.length) c.path=findPath(c.x,c.y,10,0); }
+}
+function updatePlayer(dt){
+ if(player.path.length){
+   const [tx,ty]=player.path[0], tpx=tx*TILE+20, tpy=ty*TILE+20;
+   const dx=tpx-player.px, dy=tpy-player.py, d=Math.hypot(dx,dy), sp=dt*0.155;
+   stepTimer-=dt;
+   if(d<sp){ player.px=tpx; player.py=tpy; player.x=tx; player.y=ty; player.path.shift(); if(stepTimer<=0){sfx('step');stepTimer=240;} }
+   else { player.px+=dx/d*sp; player.py+=dy/d*sp; if(stepTimer<=0){sfx('step');stepTimer=240;} }
+ }
+}
+function update(dt){
+ if(isOpen){ time+=dt*0.032; if(time>=1260) endDay(); }
+ spawnTimer+=dt;
+ if(isOpen&&spawnTimer>spawnInterval&&time<1200) spawnCustomer();
+ updatePlayer(dt);
+ customers.forEach(c=>updateCustomer(c,dt));
+ if(isOpen){ cleanliness=Math.max(0,cleanliness-dt*0.0009-customers.length*dt*0.0004); }
+ if(cleanliness<72&&Math.random()<0.008){ dirtSpots.push({x:3+Math.random()*14,y:3+Math.random()*9}); if(dirtSpots.length>35) dirtSpots.shift(); }
+ floatingTexts.forEach(f=>{f.y-=dt*0.028;f.life-=dt;}); floatingTexts=floatingTexts.filter(f=>f.life>0);
+ document.getElementById('money').textContent=Math.floor(money);
+ document.getElementById('rep').textContent=Math.floor(rep);
+ document.getElementById('clean').textContent=Math.floor(cleanliness);
+ document.getElementById('day').textContent=day;
+ const h=Math.floor(time/60)%24, m=Math.floor(time%60); document.getElementById('time').textContent=`${h%12||12}:${m.toString().padStart(2,'0')}${h>=12?'pm':'am'}`;
+}
+function endDay(){
+ isOpen=false; customers.forEach(c=>{c.state='leaving'; c.path=findPath(c.x,c.y,10,0);});
+ setTimeout(()=>{
+   const bonus=musicOn?5:0; rep=Math.min(100,rep+bonus);
+   alert(`DAY ${day} CLOSED\nEarnings: $${Math.floor(dayEarnings)}\nReputation: ${Math.floor(rep)}${bonus?` (+${bonus} music bonus)`:''}\nCleanliness left: ${Math.floor(cleanliness)}%`);
+   day++; time=540; isOpen=true; cleanliness=Math.min(100,cleanliness+25); dayEarnings=0;
+   spawnInterval=Math.max(1800,5000-day*320);
+   if(day>7){ alert(money>=500?'🏆 YOU WIN! Vinyl empire built!':'Game Over - Try again!'); resetGame(); return; }
+   saveGame();
+ },900);
+}
+function draw(){
+ ctx.clearRect(0,0,800,600);
+ for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+   ctx.fillStyle=((x+y)%2)?'#5d4736':'#6f553f'; ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+   ctx.fillStyle='rgba(0,0,0,0.07)'; ctx.fillRect(x*TILE,y*TILE,TILE,1);
+ }
+ dirtSpots.forEach(d=>{ ctx.fillStyle='rgba(30,20,10,0.38)'; ctx.beginPath(); ctx.arc(d.x*TILE,d.y*TILE,7,0,7); ctx.fill(); });
+ for(let y=0;y<H;y++) for(let x=0;x<W;x++) if(map[y][x]===1){ ctx.fillStyle='#1a120e'; ctx.fillRect(x*TILE,y*TILE,TILE,TILE); ctx.fillStyle='#2a1e17'; ctx.fillRect(x*TILE,y*TILE,TILE,6); }
+ shelves.forEach(s=>{
+   ctx.fillStyle='#3b261a'; ctx.fillRect(s.x*TILE-3,s.y*TILE-3,s.w*TILE+6,s.h*TILE+6);
+   ctx.fillStyle='#7a5237'; ctx.fillRect(s.x*TILE,s.y*TILE,s.w*TILE,s.h*TILE);
+   ctx.fillStyle='#24180f'; ctx.fillRect(s.x*TILE+3,s.y*TILE+4,s.w*TILE-6,s.h*TILE-8);
+   for(let i=0;i<Math.max(s.w,s.h)*3;i++){ ctx.fillStyle=inventory[s.genre].color; if(s.w>s.h) ctx.fillRect(s.x*TILE+4+i*6,s.y*TILE+6,4,s.h*TILE-12); else ctx.fillRect(s.x*TILE+4,s.y*TILE+4+i*6,s.w*TILE-8,4); }
+   ctx.fillStyle='#e7d5b5'; ctx.font='bold 10px monospace'; ctx.textAlign='center'; ctx.fillText(s.label,s.x*TILE+s.w*TILE/2,s.y*TILE-5);
+ });
+ ctx.fillStyle='#4a3626'; ctx.fillRect(8*TILE,11*TILE,4*TILE,26); ctx.fillStyle='#6a4e37'; ctx.fillRect(8*TILE,11*TILE,4*TILE,10);
+ const rpX=9*TILE+10, rpY=11*TILE+4; ctx.fillStyle=musicOn?'#eab308':'#1f1a15'; ctx.fillRect(rpX,rpY,20,14); ctx.fillStyle='#0a0603'; ctx.beginPath(); ctx.arc(rpX+10,rpY+7,7,0,7); ctx.fill(); ctx.fillStyle=musicOn?'#000':'#444'; ctx.beginPath(); ctx.arc(rpX+10,rpY+7,2,0,7); ctx.fill(); if(musicOn){ctx.strokeStyle='#facc15';ctx.lineWidth=2;ctx.beginPath();ctx.arc(rpX+10,rpY+7,11+Math.sin(Date.now()*0.005)*1,0,7);ctx.stroke();}
+ ctx.fillStyle='#050301'; ctx.fillRect(10*TILE,0,TILE,10); ctx.fillStyle='#c4b59d'; ctx.font='10px monospace'; ctx.textAlign='center'; ctx.fillText('EXIT',410,14);
+ customers.forEach(c=>{ ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(c.px,c.py+12,13,6,0,0,7); ctx.fill(); });
+ ctx.fillStyle='rgba(0,0,0,0.32)'; ctx.beginPath(); ctx.ellipse(player.px,player.py+14,15,7,0,0,7); ctx.fill();
+ customers.forEach(c=>{
+   const by=Math.sin(c.bob)*1.5;
+   ctx.fillStyle=c.angry?'#7f1d1d':'#b91c1c'; ctx.beginPath(); ctx.arc(c.px,c.py+by-8,12,0,7); ctx.fill(); ctx.strokeStyle='#0a0a0a'; ctx.lineWidth=2; ctx.stroke();
+   ctx.fillStyle='#fde68a'; ctx.beginPath(); ctx.arc(c.px,c.py+by-17,6.5,0,7); ctx.fill();
+   ctx.fillStyle=inventory[c.genre].color; ctx.fillRect(c.px-6,c.py+by-23,12,5);
+   if(c.state==='waiting'||c.state==='browsing'){
+     const w=32,p=c.patience/c.maxPatience; ctx.fillStyle='#000'; ctx.fillRect(c.px-w/2-1,c.py+by-34,w+2,6);
+     ctx.fillStyle=p>0.6?'#22c55e':p>0.3?'#f59e0b':'#dc2626'; ctx.fillRect(c.px-w/2,c.py+by-33,w*p,4);
+   }
+ });
+ ctx.fillStyle='#1d4ed8'; ctx.beginPath(); ctx.arc(player.px,player.py-9,13.5,0,7); ctx.fill(); ctx.strokeStyle='#dbeafe'; ctx.lineWidth=3; ctx.stroke();
+ ctx.fillStyle='#bfdbfe'; ctx.beginPath(); ctx.arc(player.px,player.py-19,7.5,0,7); ctx.fill();
+ floatingTexts.forEach(f=>{ ctx.globalAlpha=Math.max(0,f.life/1100); ctx.font='bold 15px monospace'; ctx.fillStyle=f.color; ctx.textAlign='center'; ctx.strokeStyle='#000'; ctx.lineWidth=3; ctx.strokeText(f.text,f.x,f.y); ctx.fillText(f.text,f.x,f.y); ctx.globalAlpha=1; });
+ if(time>1080||time<360){ let d=0; if(time>1080) d=Math.min(0.65,(time-1080)/180*0.65); if(time<360) d=0.55; ctx.fillStyle=`rgba(8,4,20,${d})`; ctx.fillRect(0,0,800,600); ctx.fillStyle=`rgba(255,210,120,${0.12-d*0.1})`; ctx.fillRect(9*TILE,0,2*TILE,90); }
+}
+function addFloat(t,x,y,c){ floatingTexts.push({text:t,x,y,color:c,life:1150}); }
+
+canvas.addEventListener('click',e=>{
+ initAudio(); const r=canvas.getBoundingClientRect(),sx=canvas.width/r.width,sy=canvas.height/r.height;
+ const mx=(e.clientX-r.left)*sx, my=(e.clientY-r.top)*sy;
+ const hit=customers.find(c=>Math.hypot(c.px-mx,c.py-my)<19 && c.state==='waiting');
+ if(hit){ openCustomerPopup(hit,e.clientX,e.clientY); return; }
+ const tx=Math.floor(mx/TILE), ty=Math.floor(my/TILE);
+ if(isWalkable(tx,ty)){ player.path=findPath(player.x,player.y,tx,ty); closePopup(); }
+});
+canvas.addEventListener('contextmenu',e=>{
+ e.preventDefault(); initAudio();
+ const r=canvas.getBoundingClientRect(),sx=canvas.width/r.width,sy=canvas.height/r.height;
+ const mx=(e.clientX-r.left)*sx, my=(e.clientY-r.top)*sy;
+ const tx=Math.floor(mx/TILE), ty=Math.floor(my/TILE);
+ if(money>=2&&isWalkable(tx,ty)){ money-=2; cleanliness=Math.min(100,cleanliness+16); sfx('clean'); addFloat('-$2',tx*TILE+20,ty*TILE-5,'#4ade80'); dirtSpots=dirtSpots.filter(d=>Math.hypot(d.x-tx,d.y-ty)>1.4); }
+});
+
+function openCustomerPopup(c,cx,cy){
+ currentCustomer=c; const p=document.getElementById('customerPopup');
+ p.style.display='block'; p.style.left=Math.min(cx+12,window.innerWidth-260)+'px'; p.style.top=Math.max(70,cy-80)+'px';
+ document.getElementById('custWant').innerHTML=`<h4>CUSTOMER WANTS</h4><div style="font-size:13px;color:${inventory[c.genre].color};font-weight:bold">${c.genreName}</div><div style="font-size:11px;opacity:0.8;margin-top:4px">Patience ${Math.floor(c.patience)}%</div>`;
+ let html=''; inventory.forEach((it,i)=>{ const dis=it.stock<=0?'disabled':''; html+=`<button class="genreBtn" ${dis} onclick="sellVinyl(${i})" style="border-left:5px solid ${it.color}">${it.name} — $${it.price} <span style="opacity:0.7">(${it.stock} left)</span></button>`; });
+ document.getElementById('custButtons').innerHTML=html;
+}
+function closePopup(){ document.getElementById('customerPopup').style.display='none'; currentCustomer=null; }
+function sellVinyl(i){
+ if(!currentCustomer) return; const it=inventory[i]; if(it.stock<=0) return;
+ const ok=i===currentCustomer.genre; it.stock--;
+ if(ok){ const earn=it.price+Math.floor(rep/15); money+=earn; dayEarnings+=earn; rep=Math.min(100,rep+3.2); sfx('cash'); addFloat(`+$${earn}`,currentCustomer.px,currentCustomer.py-28,'#22c55e'); currentCustomer.state='leaving'; currentCustomer.path=findPath(currentCustomer.x,currentCustomer.y,10,0); }
+ else { rep=Math.max(0,rep-5); sfx('angry'); addFloat('WRONG GENRE!',currentCustomer.px,currentCustomer.py-28,'#ef4444'); currentCustomer.state='angry'; currentCustomer.angry=true; currentCustomer.path=findPath(currentCustomer.x,currentCurrent=>currentCustomer.x,currentCustomer.y,10,0); currentCustomer.path=findPath(currentCustomer.x,currentCustomer.y,10,0); }
+ closePopup(); renderInventory();
+}
+function renderInventory(){
+ const el=document.getElementById('inventory'); let h='<h3>VINYL INVENTORY</h3>';
+ inventory.forEach((it,i)=>{ h+=`<div class="vin"><span class="lbl" style="color:${it.color}">${it.name}</span><span>${it.stock}</span><span>$${it.price}</span><button onclick="restock(${i})">RESTOCK $${it.cost*5}</button></div>`; });
+ el.innerHTML=h;
+}
+function restock(i){ const it=inventory[i], c=it.cost*5; if(money>=c){ money-=c; it.stock+=5; sfx('cash'); renderInventory(); addFloat(`- $${c}`,420,520,'#fbbf24'); } }
+
+document.getElementById('musicPlayer').onclick=()=>{ musicOn=!musicOn; document.getElementById('musicPlayer').classList.toggle('on',musicOn); initAudio(); if(musicOn) sfx('door'); };
+function toggleSound(){ soundOn=!soundOn; document.getElementById('soundBtn').textContent=soundOn?'🔊 SOUND':'🔇 SOUND'; }
+function saveGame(){ localStorage.setItem('vinylSave',JSON.stringify({money,rep,cleanliness,day,time,inventory,musicOn,soundOn})); addFloat('SAVED',player.px,player.py-30,'#60a5fa'); }
+function loadGame(){ const d=localStorage.getItem('vinylSave'); if(!d)return; try{ const s=JSON.parse(d); money=s.money??100; rep=s.rep??50; cleanliness=s.cleanliness??100; day=s.day??1; time=s.time??540; inventory=s.inventory??inventory; musicOn=s.musicOn??false; soundOn=s.soundOn??true; document.getElementById('musicPlayer').classList.toggle('on',musicOn); }catch{} }
+function resetGame(){ if(confirm('Reset entire store progress?')){ localStorage.removeItem('vinylSave'); location.reload(); } }
+
+function loop(now){ const dt=Math.min(33,now-lastTime); lastTime=now; update(dt); draw(); requestAnimationFrame(loop); }
+window.onload=()=>{
+ initMap(); loadGame(); renderInventory(); spawnInterval=Math.max(1800,5000-day*320);
+ document.getElementById('soundBtn').textContent=soundOn?'🔊 SOUND':'🔇 SOUND';
+ document.getElementById('musicPlayer').classList.toggle('on',musicOn);
+ lastTime=performance.now(); requestAnimationFrame(loop);
+ setInterval(saveGame,12000);
+};
+</script>
+</body>
+</html>
